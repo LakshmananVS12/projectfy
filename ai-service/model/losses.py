@@ -18,15 +18,11 @@ def _sigmoid_focal_loss(
     p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
     modulating = (1.0 - p_t).pow(gamma)
     alpha_t = alpha * targets + (1.0 - alpha) * (1.0 - targets)
-    return (alpha_t * modulating * ce_loss).mean()
+    return alpha_t * modulating * ce_loss
 
 
 class FCOSLoss(nn.Module):
-    """Simplified FCOS-style losses for single-level training.
-
-    Ground truth boxes are expected as tensors shaped [N, 5] where each row is
-    [x1, y1, x2, y2, class_id] in image-pixel coordinates.
-    """
+    """Simplified FCOS-style losses for single-level training."""
 
     def __init__(self, num_classes: int, stride: int) -> None:
         super().__init__()
@@ -69,7 +65,8 @@ class FCOSLoss(nn.Module):
                 btm = max(y2 - py, 1e-6)
 
                 cls_targets[b_idx, cls_id, iy, ix] = 1.0
-                reg_targets[b_idx, :, iy, ix] = torch.tensor([l, t, r, btm], device=device)
+                # Normalize regression targets by stride for stable gradients
+                reg_targets[b_idx, :, iy, ix] = torch.tensor([l, t, r, btm], device=device) / self.stride
                 center_targets[b_idx, 0, iy, ix] = ((min(l, r) / max(l, r)) * (min(t, btm) / max(t, btm))) ** 0.5
                 positive_mask[b_idx, 0, iy, ix] = True
 
@@ -90,24 +87,40 @@ class FCOSLoss(nn.Module):
         bsz, _, feat_h, feat_w = cls_logits.shape
         targets = self._build_targets(gt_boxes_per_image, feat_h, feat_w, cls_logits.device)
 
-        cls_loss = _sigmoid_focal_loss(cls_logits, targets["cls"])
+        # 1. Focal Loss for Classification
+        # Sum over all pixels, but normalize by the number of positive samples (boxes)
+        focal_loss_map = _sigmoid_focal_loss(cls_logits, targets["cls"])
+        num_pos = targets["mask"].sum().clamp(min=1.0)
+        cls_loss = focal_loss_map.sum() / num_pos
 
         reg_loss = torch.tensor(0.0, device=cls_logits.device)
         center_loss = torch.tensor(0.0, device=cls_logits.device)
 
         if targets["mask"].any():
+            # 2. Regression Loss
             pos_mask_reg = targets["mask"].expand(-1, 4, -1, -1)
-            reg_loss = F.smooth_l1_loss(
-                bbox_reg[pos_mask_reg],
-                targets["reg"][pos_mask_reg],
-                reduction="mean",
+            # Normalize bbox_reg by stride as well, since targets are normalized
+            # We use Smooth L1 on the normalized distances, which makes the loss much smaller and bounded
+            bbox_reg_norm = bbox_reg / self.stride
+            
+            # Multiply by centerness targets to downweight poor bounding boxes (standard FCOS trick)
+            center_weights = targets["center"][targets["mask"]].unsqueeze(1)
+            
+            # Compute Smooth L1 (shape: [num_pos, 4])
+            per_box_reg_loss = F.smooth_l1_loss(
+                bbox_reg_norm[pos_mask_reg].view(-1, 4),
+                targets["reg"][pos_mask_reg].view(-1, 4),
+                reduction="none"
             )
+            # Apply centerness weights and sum, then average over num_pos
+            reg_loss = (per_box_reg_loss * center_weights).sum() / num_pos
 
+            # 3. Centerness Loss
             center_loss = F.binary_cross_entropy_with_logits(
                 centerness[targets["mask"]],
                 targets["center"][targets["mask"]],
-                reduction="mean",
-            )
+                reduction="sum",
+            ) / num_pos
 
         total = cls_loss + reg_loss + center_loss
         return {

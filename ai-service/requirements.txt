@@ -1,0 +1,16 @@
+# Core framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# PyTorch ecosystem
+torch>=2.1.0
+torchvision>=0.16.0
+timm>=0.9.7
+
+# Image / video processing
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+
+# ONNX (optional, for future ONNX-runtime inference)
+# onnxruntime>=1.16.0

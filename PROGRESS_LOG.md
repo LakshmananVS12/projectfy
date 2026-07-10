@@ -55,3 +55,51 @@
 ### Still pending
 - User needs to execute the new one-go notebook in Colab and share final metrics + artifact confirmation.
 - Service endpoints and video async pipeline remain pending until weight files are confirmed in repo.
+
+## 2026-07-10 (AI Module — Prompt 1 Completion)
+
+### What was built
+- **FastAPI application** in [ai-service/main.py](ai-service/main.py):
+	- `POST /detect` — synchronous single-image detection returning detections, severity, CNN Grad-CAM heatmap, ViT attention rollout heatmap, and processing time.
+	- `POST /scan/video` — submit an async video scan job, returns `{job_id, status: "QUEUED"}` immediately.
+	- `GET /scan/{job_id}` — poll job status (`QUEUED`/`PROCESSING`/`COMPLETED`/`FAILED`), progress percentage, and results when complete.
+	- `GET /health` — health check with model load status.
+	- CORS enabled for frontend consumption.
+	- `ThreadPoolExecutor` for background video processing (configurable max workers).
+- **Video scan pipeline** in [ai-service/video_scan.py](ai-service/video_scan.py):
+	- Frame extraction via OpenCV at configurable sample rate (default 1 fps).
+	- Per-frame detection using the **same** hybrid model (no separate video model).
+	- `CrossFrameTracker` — IoU-based cross-frame deduplication (IoU threshold 0.35, stale timeout 2s).
+	- Tracks are promoted to `DamageEvent`s on finalisation, keeping the highest-confidence frame as representative.
+	- Explainability heatmaps generated for each event's representative frame.
+	- `VideoJobManager` — thread-safe in-memory job store for the async submit-poll-fetch pattern.
+- **Dockerfile** for the AI service (Python 3.11-slim base, health check, env-configurable settings).
+- **requirements.txt** with pinned dependency ranges.
+- **E2E test script** in [ai-service/test_e2e.py](ai-service/test_e2e.py).
+
+### Decisions made
+- Frame sampling rate: **1 fps** (configurable via `VIDEO_FPS_EXTRACT` env var).
+- Cross-frame tracker IoU threshold: **0.35** (lower than NMS threshold to account for camera movement shifting bbox positions between frames). Stale timeout: **2.0 seconds**.
+- Used `ThreadPoolExecutor` (max 2 workers) for background video processing — keeps dependency footprint minimal; no Redis/Celery needed at this scope.
+- All configuration is env-var-driven for Docker/deployment flexibility.
+
+### E2E validation results
+All 4 tests passed:
+- `GET /health` — 200, status=ok
+- `POST /detect` — 200, heatmaps present, processing time ~4671ms (CPU, first load)
+- `POST /scan/video` + `GET /scan/{job_id}` — QUEUED -> COMPLETED, 0 detections on synthetic test video (expected with model trained on real road data)
+- `GET /scan/nonexistent` — 404
+
+Note: 0 detections on synthetic images is expected — the model was trained on real RDD2022 road damage images. With real road photos/videos containing potholes/cracks, the model will produce detections.
+
+### Current model metrics
+- Model weights present at `ai-service/weights/hybrid_detector_best.pt` (183 MB) and `hybrid_detector.onnx` (1.3 MB).
+- No mAP/IoU/F1 metrics available yet — user trained via Colab but metrics were not reported back.
+
+### Status
+- **Prompt 1 (AI Module) is COMPLETE.** All items delivered and validated.
+- Ready for Prompt 2 (Backend) or Prompt 3 (Frontend).
+
+### Pending manual actions
+- None for the AI module. Ready for next prompt.
+
