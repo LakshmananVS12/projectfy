@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Tuple
 import math
 
@@ -171,12 +171,26 @@ class HybridRoadDamageDetector(nn.Module):
         )
 
         # Pretrained branch: ViT global-context extractor.
-        self.vit_branch = timm.create_model(
-            self.config.vit_variant,
-            pretrained=self.config.pretrained_backbones,
-            num_classes=0,
-            global_pool="",
-        )
+        # dynamic_img_size=True allows training/inference at resolutions like 512/640
+        # even when using DeiT variants named with a 224 pretraining size.
+        vit_kwargs = {
+            "pretrained": self.config.pretrained_backbones,
+            "num_classes": 0,
+            "global_pool": "",
+        }
+        try:
+            self.vit_branch = timm.create_model(
+                self.config.vit_variant,
+                dynamic_img_size=True,
+                **vit_kwargs,
+            )
+        except TypeError:
+            # Backward-compatible fallback for older timm APIs.
+            self.vit_branch = timm.create_model(self.config.vit_variant, **vit_kwargs)
+            if hasattr(self.vit_branch, "dynamic_img_size"):
+                self.vit_branch.dynamic_img_size = True
+            if hasattr(self.vit_branch, "patch_embed") and hasattr(self.vit_branch.patch_embed, "strict_img_size"):
+                self.vit_branch.patch_embed.strict_img_size = False
         vit_channels = self.vit_branch.num_features
 
         # From-scratch fusion block to merge CNN + ViT spatial maps.
