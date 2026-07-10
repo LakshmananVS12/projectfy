@@ -41,3 +41,17 @@
 - Run [training/train_hybrid_model.ipynb](training/train_hybrid_model.ipynb) in Colab and place outputs into:
 	- [ai-service/weights/hybrid_detector_best.pt](ai-service/weights/hybrid_detector_best.pt)
 	- [ai-service/weights/hybrid_detector.onnx](ai-service/weights/hybrid_detector.onnx)
+
+## 2026-07-10 (Notebook Streamline Update)
+
+### What was built
+- Added one-go Colab notebook [training/train_hybrid_model_one_go.ipynb](training/train_hybrid_model_one_go.ipynb) to reduce setup confusion.
+- The new notebook automates: repo clone, Drive zip extraction, preprocessing, training, ONNX export, and copying final artifacts to both project weights folder and Google Drive output folder.
+
+### Decisions made
+- Kept training defaults aligned with prior plan (image size 640, batch size 8, staged freeze/unfreeze, fp16, 4-class target).
+- Added strict path/file checks with clear runtime errors to fail fast when data placement is incorrect.
+
+### Still pending
+- User needs to execute the new one-go notebook in Colab and share final metrics + artifact confirmation.
+- Service endpoints and video async pipeline remain pending until weight files are confirmed in repo.
